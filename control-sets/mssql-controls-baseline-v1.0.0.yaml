@@ -1,0 +1,303 @@
+metadata:
+  control_set_id: mssql-controls-baseline-v1.0.0
+  control_set_version: 1.0.0
+  database_type: mssql
+  control_set_type: Security
+  tier: free
+  description: SQL Server Security Baseline - high-signal current-state findings for free tier
+  author: system
+  license: Proprietary
+  # FREE TIER: Summary findings only. No audit logs, history, drift, grant timeline,
+  # raw SQL activity, or compliance evidence archive. Slice 2 paid pack will add those.
+  signature:
+    algorithm: RSA-SHA256
+    signature_b64: "TOuMvFpORPLQTVUkIggtFnvZL2xIkuYukiqdtQKiAHuuJ2avAxsgQcqlIwEeUkuctW9FIp3k1ExkT7lmBBapk5A0+dQeE92hv0jTAliqx0EzkNmT2oDOohclITtgUqpoBwVjvuBGC+qXcyEuSBcexKtLJ60txBnFa8OneLE6yE6TrVG1SUx+TeerA0PpWW/KEF8kK0qP4pdYrIv7Lodc38IyEqdf04uKqpKUs5vHPWEz5gh+qkQyEdEYOgoMUntraqyPlY5Rdunh7ry6mb50lyl8WbJ0cNVrmq3Fcx9yFezJdPF5vsyXmsdqimH1pCu/GBk+qTVAgKxFo+0w+9G84w=="
+
+controls:
+  - control_id: MSSQL-FREE-001
+    control_code: MSSQL-FREE-001
+    category: Identity
+    title: SQL Server Version and Edition
+    description: Collects SQL Server version and edition for security baseline assessment
+    procedures:
+      - procedure_id: MSSQL-FREE-001-P1
+        system_type: mssql
+        tests: |
+          SELECT
+            SERVERPROPERTY('ProductVersion') AS product_version,
+            SERVERPROPERTY('ProductLevel') AS product_level,
+            SERVERPROPERTY('Edition') AS edition,
+            SERVERPROPERTY('EngineEdition') AS engine_edition,
+            @@VERSION AS version_string
+        criteria:
+          - condition: "informational"
+            severity: INFO
+
+  - control_id: MSSQL-FREE-002
+    control_code: MSSQL-FREE-002
+    category: Authentication
+    title: SA Login Enabled
+    description: Detects if the built-in sa login is enabled, which is a common attack target
+    procedures:
+      - procedure_id: MSSQL-FREE-002-P1
+        system_type: mssql
+        tests: |
+          SELECT 1 AS sa_enabled
+          FROM sys.sql_logins
+          WHERE name = 'sa'
+            AND is_disabled = 0
+        criteria:
+          - condition: "sa_enabled == 1"
+            severity: HIGH
+            finding_title: "SA login is enabled"
+    remediation:
+      summary: "The built-in sa account is a known attack target and should be disabled: ALTER LOGIN sa DISABLE"
+
+  - control_id: MSSQL-FREE-003
+    control_code: MSSQL-FREE-003
+    category: Authorization
+    title: Sysadmin Member Review
+    description: Reports count of non-default sysadmin members for least-privilege review
+    procedures:
+      - procedure_id: MSSQL-FREE-003-P1
+        system_type: mssql
+        tests: |
+          SELECT COUNT(*) AS non_default_sysadmin_count
+          FROM sys.server_role_members rm
+          JOIN sys.server_principals p ON rm.member_principal_id = p.principal_id
+          JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id
+          WHERE r.name = 'sysadmin'
+            AND p.name NOT IN ('sa', 'NT AUTHORITY\SYSTEM', 'NT SERVICE\MSSQLSERVER', 'NT SERVICE\SQLSERVERAGENT')
+            AND p.name NOT LIKE '##MS_%'
+        criteria:
+          - condition: "non_default_sysadmin_count > 0"
+            severity: MEDIUM
+            finding_title: "Review: Non-default sysadmin members exist"
+    remediation:
+      summary: "Review sysadmin membership and apply least-privilege. Some admin accounts may legitimately require sysadmin."
+
+  - control_id: MSSQL-FREE-004
+    control_code: MSSQL-FREE-004
+    category: Auditing
+    title: Server Audit Not Configured
+    description: Detects if SQL Server Audit is not configured or disabled
+    procedures:
+      - procedure_id: MSSQL-FREE-004-P1
+        system_type: mssql
+        tests: |
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM sys.server_audits WHERE is_state_enabled = 1
+          ) THEN 0 ELSE 1 END AS no_audit
+        criteria:
+          - condition: "no_audit == 1"
+            severity: HIGH
+            finding_title: "No server audit is enabled"
+    remediation:
+      summary: "Without auditing, security incidents cannot be detected or investigated. CREATE SERVER AUDIT and enable with ALTER SERVER AUDIT ... WITH (STATE = ON)"
+
+  # MSSQL-FREE-005 removed: Failed login auditing cannot be accurately verified via SQL query.
+
+  - control_id: MSSQL-FREE-006
+    control_code: MSSQL-FREE-006
+    category: Configuration
+    title: xp_cmdshell Enabled
+    description: Detects if xp_cmdshell is enabled, allowing OS command execution
+    procedures:
+      - procedure_id: MSSQL-FREE-006-P1
+        system_type: mssql
+        tests: |
+          SELECT value_in_use AS xp_cmdshell_enabled
+          FROM sys.configurations
+          WHERE name = 'xp_cmdshell'
+        criteria:
+          - condition: "xp_cmdshell_enabled == 1"
+            severity: CRITICAL
+            finding_title: "xp_cmdshell is enabled"
+    remediation:
+      summary: "xp_cmdshell allows SQL injection to escalate to OS command execution. EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE"
+
+  - control_id: MSSQL-FREE-007
+    control_code: MSSQL-FREE-007
+    category: Configuration
+    title: TRUSTWORTHY Database Enabled
+    description: Detects databases with TRUSTWORTHY enabled, which can enable privilege escalation
+    procedures:
+      - procedure_id: MSSQL-FREE-007-P1
+        system_type: mssql
+        tests: |
+          SELECT COUNT(*) AS trustworthy_count
+          FROM sys.databases
+          WHERE is_trustworthy_on = 1
+            AND name NOT IN ('msdb')
+        criteria:
+          - condition: "trustworthy_count > 0"
+            severity: HIGH
+            finding_title: "TRUSTWORTHY database setting enabled"
+    remediation:
+      summary: "TRUSTWORTHY can enable privilege escalation from db_owner to sysadmin. ALTER DATABASE [dbname] SET TRUSTWORTHY OFF"
+
+  - control_id: MSSQL-FREE-008
+    control_code: MSSQL-FREE-008
+    category: Configuration
+    title: Cross Database Ownership Chaining Enabled
+    description: Detects if cross database ownership chaining is enabled server-wide
+    procedures:
+      - procedure_id: MSSQL-FREE-008-P1
+        system_type: mssql
+        tests: |
+          SELECT value_in_use AS cross_db_chaining
+          FROM sys.configurations
+          WHERE name = 'cross db ownership chaining'
+        criteria:
+          - condition: "cross_db_chaining == 1"
+            severity: MEDIUM
+            finding_title: "Cross database ownership chaining is enabled"
+    remediation:
+      summary: "Allows unintended access across database boundaries. EXEC sp_configure 'cross db ownership chaining', 0; RECONFIGURE"
+
+  - control_id: MSSQL-FREE-009
+    control_code: MSSQL-FREE-009
+    category: Configuration
+    title: Contained Database Authentication Enabled
+    description: Detects if contained database authentication is enabled
+    procedures:
+      - procedure_id: MSSQL-FREE-009-P1
+        system_type: mssql
+        tests: |
+          SELECT value_in_use AS contained_auth
+          FROM sys.configurations
+          WHERE name = 'contained database authentication'
+        criteria:
+          - condition: "contained_auth == 1"
+            severity: MEDIUM
+            finding_title: "Contained database authentication is enabled"
+    remediation:
+      summary: "Contained databases bypass server-level authentication controls. EXEC sp_configure 'contained database authentication', 0; RECONFIGURE"
+
+  - control_id: MSSQL-FREE-010
+    control_code: MSSQL-FREE-010
+    category: Authorization
+    title: Public Role Has Dangerous Permissions
+    description: Detects dangerous permissions granted to the public role
+    procedures:
+      - procedure_id: MSSQL-FREE-010-P1
+        system_type: mssql
+        tests: |
+          SELECT COUNT(*) AS dangerous_public_perms
+          FROM sys.database_permissions
+          WHERE grantee_principal_id = DATABASE_PRINCIPAL_ID('public')
+            AND permission_name IN (
+              'CONTROL', 'ALTER', 'DELETE', 'INSERT', 'UPDATE',
+              'EXECUTE', 'REFERENCES', 'VIEW DEFINITION'
+            )
+            AND state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
+            AND class_desc != 'DATABASE'
+        criteria:
+          - condition: "dangerous_public_perms > 0"
+            severity: HIGH
+            finding_title: "Public role has dangerous permissions"
+    remediation:
+      summary: "Permissions on public role apply to all database users. REVOKE dangerous permissions from public."
+
+  - control_id: MSSQL-FREE-011
+    control_code: MSSQL-FREE-011
+    category: Authentication
+    title: SQL Logins Without Password Policy
+    description: Detects SQL logins with CHECK_POLICY disabled
+    procedures:
+      - procedure_id: MSSQL-FREE-011-P1
+        system_type: mssql
+        tests: |
+          SELECT COUNT(*) AS logins_without_policy
+          FROM sys.sql_logins
+          WHERE is_policy_checked = 0
+            AND is_disabled = 0
+            AND name NOT LIKE '##MS_%'
+        criteria:
+          - condition: "logins_without_policy > 0"
+            severity: MEDIUM
+            finding_title: "SQL logins without password policy"
+    remediation:
+      summary: "Password policy enforcement prevents weak passwords. Review SQL logins and enable CHECK_POLICY."
+
+  - control_id: MSSQL-FREE-012
+    control_code: MSSQL-FREE-012
+    category: Authentication
+    title: SQL Logins Without Password Expiration
+    description: Detects SQL logins with CHECK_EXPIRATION disabled
+    procedures:
+      - procedure_id: MSSQL-FREE-012-P1
+        system_type: mssql
+        tests: |
+          SELECT COUNT(*) AS logins_without_expiration
+          FROM sys.sql_logins
+          WHERE is_expiration_checked = 0
+            AND is_disabled = 0
+            AND name NOT LIKE '##MS_%'
+        criteria:
+          - condition: "logins_without_expiration > 0"
+            severity: LOW
+            finding_title: "SQL logins without password expiration"
+    remediation:
+      summary: "Password expiration ensures credentials are rotated. Review SQL logins and enable CHECK_EXPIRATION."
+
+  - control_id: MSSQL-FREE-013
+    control_code: MSSQL-FREE-013
+    category: Encryption
+    title: Database Encryption Review
+    description: Reports user database encryption status for TDE review
+    procedures:
+      - procedure_id: MSSQL-FREE-013-P1
+        system_type: mssql
+        tests: |
+          SELECT COUNT(*) AS unencrypted_database_count
+          FROM sys.databases d
+          LEFT JOIN sys.dm_database_encryption_keys dek ON d.database_id = dek.database_id
+          WHERE d.name NOT IN ('master', 'model', 'msdb', 'tempdb')
+            AND d.state_desc = 'ONLINE'
+            AND COALESCE(dek.encryption_state, 0) NOT IN (3)
+        criteria:
+          - condition: "unencrypted_database_count > 0"
+            severity: LOW
+            finding_title: "Review: Unencrypted databases exist"
+    remediation:
+      summary: "Evaluate if Transparent Data Encryption is required based on data sensitivity and compliance needs. TDE is not required for all databases."
+
+  - control_id: MSSQL-FREE-014
+    control_code: MSSQL-FREE-014
+    category: Lifecycle
+    title: Unsupported SQL Server Version
+    description: Flags SQL Server versions that are out of mainstream or extended support
+    procedures:
+      - procedure_id: MSSQL-FREE-014-P1
+        system_type: mssql
+        tests: |
+          SELECT CAST(SERVERPROPERTY('ProductMajorVersion') AS INT) AS major_version
+        criteria:
+          - condition: "major_version < 13"
+            severity: HIGH
+            finding_title: "SQL Server version is unsupported"
+          - condition: "major_version >= 13 AND major_version < 15"
+            severity: MEDIUM
+            finding_title: "SQL Server version is in extended support"
+    remediation:
+      summary: "Unsupported versions do not receive security patches. Upgrade to a supported SQL Server version."
+
+  - control_id: MSSQL-FREE-015
+    control_code: MSSQL-FREE-015
+    category: Configuration
+    title: Remote Admin Connections Enabled
+    description: Detects if remote dedicated admin connection (DAC) is enabled
+    procedures:
+      - procedure_id: MSSQL-FREE-015-P1
+        system_type: mssql
+        tests: |
+          SELECT value_in_use AS remote_dac
+          FROM sys.configurations
+          WHERE name = 'remote admin connections'
+        criteria:
+          - condition: "remote_dac == 1"
+            severity: MEDIUM
+            finding_title: "Remote admin connections (DAC) enabled"
+    remediation:
+      summary: "Remote DAC bypasses normal connection limits and may be abused. EXEC sp_configure 'remote admin connections', 0; RECONFIGURE"

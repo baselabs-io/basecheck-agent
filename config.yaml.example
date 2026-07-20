@@ -1,0 +1,66 @@
+# Default public configuration: bundled free packs with generic HTTP/webhook
+# or syslog output. The same agent can run separately distributed paid packs
+# with a valid entitlement; paid-pack and platform configuration are not
+# included in this public example.
+
+agent:
+  name: "basecheck-agent"
+  hostname: ""
+  version: "1.0.0"
+
+control_sets:
+  source: "local"
+  local_path: "control-sets"
+  cache_path: ".cache/control-sets"
+
+databases:
+  - name: "postgres-prod"
+    type: "postgres"
+    host: "db.example.com"
+    port: 5432
+    database: "production"
+    username: "basecheck_agent"
+    password: "${DB_PASSWORD}"
+    ssl_mode: "require"
+
+output:
+  mode: "siem_only"
+  file:
+    path: "output/findings.json"
+    format: "json"
+  siem:
+    destination: "webhook"
+    webhook:
+      url: "https://collector.example.com/events"
+      headers:
+        Authorization: "Bearer ${SIEM_TOKEN}"
+      timeout_seconds: 30
+    # To use syslog instead, replace webhook with:
+    # syslog:
+    #   host: "syslog.example.com"
+    #   port: 514
+    #   protocol: "tcp"
+    #   facility: "local0"
+    #   app_name: "basecheck"
+    queue:
+      max_size: 1000
+      flush_interval_seconds: 10
+      retry_max: 5
+      retry_backoff_seconds: [1, 5, 30, 120, 300]
+      path: ".cache/siem-queue.jsonl"
+    dead_letter:
+      path: ".cache/siem-dead-letter.jsonl"
+      max_size_mb: 100
+    deduplication:
+      disabled: false
+      window_hours: 24
+      persist_path: ".cache/siem-dedup.json"
+
+security:
+  allow_http: false
+  require_signatures: true
+  public_key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskPvw0H+cKnZaMdqxd7HRMrJ6nj/4XUAQhoAbKc+adGkLk4MmCrU62M66LH/elUYEWwLxfgecHjXCr3ejHtF64bdLGgl/SiqAnFI3LPvdjPcY7+Q9jAhYSXq1p5/f8UVrNuYccjczJ3Y7ldZUlele/YBmj5+cfjAYZZ0+vfd+FIFYXQVa/HaHCRpDxkPJOTJCzEvmaiBUasXMo+CA23TSU6hHx7iyJzy/a7KvrRKpaFiJ+9SrIJksiCnYiOAMyH8X0rvr3vCtIG+BMGNwxCk9UOckGKFFkWQ8Qa6j/X38R3egDxeluypDHhzyi4V3NJWdG/D46Xsn0oKUoE9fjJ7fQIDAQAB"
+
+logging:
+  level: "info"
+  output: "stdout"

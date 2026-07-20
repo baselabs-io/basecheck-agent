@@ -1,0 +1,256 @@
+metadata:
+  control_set_id: supabase-controls-baseline-v1.0.0
+  control_set_version: 1.0.0
+  database_type: supabase
+  control_set_type: Security
+  tier: free
+  description: Supabase Security Baseline - high-signal current-state findings for free tier
+  author: system
+  license: Proprietary
+  # FREE TIER: Summary findings only. No audit logs, history, drift, exact role names,
+  # timestamps, or compliance evidence archive. Paid pack will add those.
+  # Supabase-specific: RLS, PostgREST roles, auth schema, storage buckets.
+  signature:
+    algorithm: RSA-SHA256
+    signature_b64: "pkgHjX+JBgTA4xGbWTw8HuE8euSsBZGpAwIaJcJWxYYv6EuToe2ma+uCGttf8RPeTYKQo7CyC4m9id4Pj6PpLugW0Qz0djTbdO1pc8HMsWC+H5tfgvXAojyZAmIrKVUvYcsYc7gs3cBZ68BziKRRE7QG4647SM+MhLXhijOBS9BK+1wm3NfRqQ/Tycj7Ml3QoyauziFyAikY/b+BXz0hSbSbzpbKjaY0wm/iLFktSXyltS6VNgt1dudR5W4F9RGKmu0EMtLNWBX+7E5BgUt3shGwoVBn/X9dT6343ZzncVOxGj8OmA2EQA1rVk2lcZzkH6WpaPRK2wDREPSTM1qWIg=="
+
+controls:
+  - control_id: SUPA-FREE-001
+    control_code: SUPA-FREE-001
+    category: Identity
+    title: Supabase PostgreSQL Version
+    description: Collects PostgreSQL version for Supabase project
+    procedures:
+      - procedure_id: SUPA-FREE-001-P1
+        system_type: postgres
+        tests: |
+          SELECT
+            version() AS version_string,
+            current_setting('server_version') AS server_version
+        criteria:
+          - condition: "informational"
+            severity: INFO
+
+  - control_id: SUPA-FREE-002
+    control_code: SUPA-FREE-002
+    category: Authorization
+    title: Tables Without Row Level Security
+    description: Reports count of user tables in public schema without RLS enabled
+    procedures:
+      - procedure_id: SUPA-FREE-002-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS tables_without_rls
+          FROM pg_class c
+          JOIN pg_namespace n ON c.relnamespace = n.oid
+          WHERE n.nspname = 'public'
+            AND c.relkind = 'r'
+            AND NOT c.relrowsecurity
+            AND c.relname NOT LIKE 'pg_%'
+            AND c.relname NOT LIKE '_prisma_%'
+        criteria:
+          - condition: "tables_without_rls > 0"
+            severity: HIGH
+            finding_title: "Tables without Row Level Security in public schema"
+    remediation:
+      summary: "Without RLS, data may be accessible to anon/authenticated roles via PostgREST. ALTER TABLE tablename ENABLE ROW LEVEL SECURITY and add appropriate policies."
+
+  - control_id: SUPA-FREE-003
+    control_code: SUPA-FREE-003
+    category: Authorization
+    title: RLS Enabled But No Policies
+    description: Reports count of tables with RLS enabled but no policies defined
+    procedures:
+      - procedure_id: SUPA-FREE-003-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS rls_no_policy_count
+          FROM pg_class c
+          JOIN pg_namespace n ON c.relnamespace = n.oid
+          LEFT JOIN pg_policy p ON c.oid = p.polrelid
+          WHERE n.nspname = 'public'
+            AND c.relkind = 'r'
+            AND c.relrowsecurity = true
+            AND p.polname IS NULL
+        criteria:
+          - condition: "rls_no_policy_count > 0"
+            severity: HIGH
+            finding_title: "Tables have RLS enabled but no policies defined"
+    remediation:
+      summary: "RLS without policies blocks ALL access; may be intentional deny-all or misconfiguration. Review tables and add RLS policies or disable RLS if deny-all is not intended."
+
+  - control_id: SUPA-FREE-004
+    control_code: SUPA-FREE-004
+    category: Authorization
+    title: Anon Role Has Direct Table Grants
+    description: Reports count of tables where anon role has direct grants
+    procedures:
+      - procedure_id: SUPA-FREE-004-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(DISTINCT c.relname) AS anon_granted_table_count
+          FROM pg_class c
+          JOIN pg_namespace n ON c.relnamespace = n.oid
+          JOIN information_schema.role_table_grants g ON
+            g.table_schema = n.nspname AND g.table_name = c.relname
+          WHERE n.nspname = 'public'
+            AND c.relkind = 'r'
+            AND g.grantee = 'anon'
+        criteria:
+          - condition: "anon_granted_table_count > 0"
+            severity: MEDIUM
+            finding_title: "Anon role has direct grants on public tables"
+    remediation:
+      summary: "Tables accessible to anon role are exposed to unauthenticated API requests. Review anon grants and ensure RLS policies restrict access appropriately."
+
+  - control_id: SUPA-FREE-005
+    control_code: SUPA-FREE-005
+    category: Authorization
+    title: PUBLIC Schema CREATE Permission
+    description: Detects if PUBLIC role has CREATE permission on public schema
+    procedures:
+      - procedure_id: SUPA-FREE-005-P1
+        system_type: postgres
+        tests: |
+          SELECT CASE WHEN has_schema_privilege('public', 'public', 'CREATE')
+            THEN 1 ELSE 0 END AS public_has_create
+        criteria:
+          - condition: "public_has_create == 1"
+            severity: MEDIUM
+            finding_title: "PUBLIC role has CREATE on public schema"
+    remediation:
+      summary: "Any authenticated user can create objects in public schema. REVOKE CREATE ON SCHEMA public FROM PUBLIC"
+
+  - control_id: SUPA-FREE-006
+    control_code: SUPA-FREE-006
+    category: Authorization
+    title: Service Role Grants Review
+    description: Reports if service_role has grants beyond expected Supabase defaults
+    procedures:
+      - procedure_id: SUPA-FREE-006-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS service_role_custom_grant_count
+          FROM information_schema.role_table_grants
+          WHERE grantee = 'service_role'
+            AND table_schema NOT IN ('auth', 'storage', 'realtime', 'supabase_functions', 'extensions', 'graphql', 'graphql_public', 'pgsodium', 'pgsodium_masks', 'vault', 'pg_catalog', 'information_schema')
+        criteria:
+          - condition: "service_role_custom_grant_count > 0"
+            severity: LOW
+            finding_title: "Service role has grants outside standard Supabase schemas"
+    remediation:
+      summary: "Service role bypasses RLS; verify custom grants are intentional. Review service_role grants and restrict to necessary tables only."
+
+  - control_id: SUPA-FREE-007
+    control_code: SUPA-FREE-007
+    category: Configuration
+    title: Supabase Extensions Inventory
+    description: Reports count of Supabase-managed extensions for inventory
+    procedures:
+      - procedure_id: SUPA-FREE-007-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS extension_count
+          FROM pg_extension
+          WHERE extname IN (
+            'pg_graphql', 'pg_net', 'pgsodium', 'supabase_vault',
+            'pg_stat_statements', 'pgcrypto', 'pgjwt', 'uuid-ossp',
+            'http', 'pg_cron'
+          )
+        criteria:
+          - condition: "informational"
+            severity: INFO
+
+  - control_id: SUPA-FREE-008
+    control_code: SUPA-FREE-008
+    category: Authorization
+    title: Functions Executable by Anon
+    description: Reports count of functions in public schema executable by anon role
+    procedures:
+      - procedure_id: SUPA-FREE-008-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS anon_executable_function_count
+          FROM pg_proc p
+          JOIN pg_namespace n ON p.pronamespace = n.oid
+          WHERE n.nspname = 'public'
+            AND has_function_privilege('anon', p.oid, 'EXECUTE')
+        criteria:
+          - condition: "anon_executable_function_count > 0"
+            severity: MEDIUM
+            finding_title: "Functions executable by anon role in public schema"
+    remediation:
+      summary: "Functions accessible to anon are exposed to unauthenticated API requests. Review EXECUTE grants to anon and restrict to intended functions."
+
+  - control_id: SUPA-FREE-009
+    control_code: SUPA-FREE-009
+    category: Authorization
+    title: Security Definer Functions in Public
+    description: Reports count of SECURITY DEFINER functions in public schema for review
+    procedures:
+      - procedure_id: SUPA-FREE-009-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS security_definer_count
+          FROM pg_proc p
+          JOIN pg_namespace n ON p.pronamespace = n.oid
+          WHERE n.nspname = 'public'
+            AND p.prosecdef = true
+        criteria:
+          - condition: "security_definer_count > 0"
+            severity: MEDIUM
+            finding_title: "SECURITY DEFINER functions detected for review"
+    remediation:
+      summary: "SECURITY DEFINER functions run with owner privileges. These are common in Supabase but should be reviewed for SQL injection vulnerabilities and excessive permissions."
+
+  - control_id: SUPA-FREE-010
+    control_code: SUPA-FREE-010
+    category: Data Protection
+    title: Storage Bucket Inventory
+    description: Reports storage bucket count for inventory purposes
+    procedures:
+      - procedure_id: SUPA-FREE-010-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS bucket_count
+          FROM storage.buckets
+        criteria:
+          - condition: "informational"
+            severity: INFO
+
+  - control_id: SUPA-FREE-011
+    control_code: SUPA-FREE-011
+    category: Authorization
+    title: Auth Schema Direct Access
+    description: Reports if non-service roles have grants on auth schema tables
+    procedures:
+      - procedure_id: SUPA-FREE-011-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS auth_grant_count
+          FROM information_schema.role_table_grants
+          WHERE table_schema = 'auth'
+            AND grantee NOT IN ('postgres', 'service_role', 'supabase_admin', 'supabase_auth_admin', 'dashboard_user')
+            AND grantee NOT LIKE 'pg_%'
+        criteria:
+          - condition: "auth_grant_count > 0"
+            severity: HIGH
+            finding_title: "Non-service roles have direct grants on auth schema"
+    remediation:
+      summary: "Direct access to auth tables may expose user credentials or session data. Revoke direct grants on auth schema from application roles."
+
+  - control_id: SUPA-FREE-012
+    control_code: SUPA-FREE-012
+    category: Configuration
+    title: Realtime Subscriptions Enabled
+    description: Reports if realtime schema exists indicating subscriptions are configured
+    procedures:
+      - procedure_id: SUPA-FREE-012-P1
+        system_type: postgres
+        tests: |
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM pg_namespace WHERE nspname = 'realtime'
+          ) THEN 'enabled' ELSE 'disabled' END AS realtime_status
+        criteria:
+          - condition: "informational"
+            severity: INFO

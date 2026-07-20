@@ -1,0 +1,32 @@
+agent:
+  name: "basecheck-siem-demo"
+  token_file: ""
+
+control_sets:
+  source: "local"
+  local_path: "CONTROL_SETS_PATH"
+
+databases:
+  - name: "sqlite-demo"
+    type: "sqlite"
+    database: "DATABASE_PATH"
+
+output:
+  mode: "siem_only"
+  siem:
+    destination: "webhook"
+    webhook:
+      url: "http://127.0.0.1:8787/events"
+      timeout_seconds: 5
+
+security:
+  allow_http: true
+  require_signatures: true
+  # Same repo-local dev key as config.yaml.example (see .signing/README.md /
+  # docs/SIGNING.md); verifies the real bundled control-sets/*.yaml this demo
+  # runs against, so the demo exercises the same signature-checking path as
+  # a real release rather than disabling it.
+  public_key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskPvw0H+cKnZaMdqxd7HRMrJ6nj/4XUAQhoAbKc+adGkLk4MmCrU62M66LH/elUYEWwLxfgecHjXCr3ejHtF64bdLGgl/SiqAnFI3LPvdjPcY7+Q9jAhYSXq1p5/f8UVrNuYccjczJ3Y7ldZUlele/YBmj5+cfjAYZZ0+vfd+FIFYXQVa/HaHCRpDxkPJOTJCzEvmaiBUasXMo+CA23TSU6hHx7iyJzy/a7KvrRKpaFiJ+9SrIJksiCnYiOAMyH8X0rvr3vCtIG+BMGNwxCk9UOckGKFFkWQ8Qa6j/X38R3egDxeluypDHhzyi4V3NJWdG/D46Xsn0oKUoE9fjJ7fQIDAQAB"
+
+logging:
+  output: "stdout"

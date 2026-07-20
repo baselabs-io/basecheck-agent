@@ -1,0 +1,129 @@
+metadata:
+  control_set_id: sqlite-discovery-v1.0.0
+  control_set_version: 1.0.0
+  database_type: sqlite
+  control_set_type: Discovery
+  tier: free
+  description: SQLite discovery control set for identity, durability, and size metadata
+  author: system
+  license: Proprietary
+  signature:
+    algorithm: RSA-SHA256
+    signature_b64: "J95W+e1DnqcBDxt+K5+QO9ZI+At8hNwtCkJr/TPHh8rET2gFKYxga0cje2Bk5z65/YsEbizuOkKNMIVnu9bN/9raxdGQcNzd/rz8quQ/gLkn2O3H+ZfSpOClleaYVqJgsojQnxCw33C0e0xy9UCNqHJ20LVWCJc2Kzxm/Bo3vTV5Iqe3Cs5dmkrMcmMMhiewZWO4mQQflKGO5JEGT9QBDjoeRZSjQVV5VxvXwfAKcBtvAGIEztSBF7FLSuHaPe9M0u8jdrAYkBjTS6POa2HnqAD5fAPXJ+I27iLFpfgiVCn/cbY2aXBF/0Vj1KWHQe+wLNEZvbSwX9rMgit16+gueg=="
+
+controls:
+  - control_id: SQLITE-DISC-001
+    control_code: SQLITE-DISC-001
+    category: Identity
+    title: SQLite Identity Information
+    description: Collects SQLite version and database file location
+    procedures:
+      - procedure_id: SQLITE-DISC-001-P1
+        system_type: sqlite
+        tests: |
+          SELECT
+            'DATABASE_VERSION' AS ATTRIBUTE_NAME,
+            sqlite_version() AS ATTRIBUTE_VALUE,
+            'text' AS ATTRIBUTE_TYPE,
+            'Identity' AS CATEGORY
+          UNION ALL
+          SELECT
+            'DATABASE_FILE' AS ATTRIBUTE_NAME,
+            file AS ATTRIBUTE_VALUE,
+            'text' AS ATTRIBUTE_TYPE,
+            'Identity' AS CATEGORY
+          FROM pragma_database_list
+          WHERE name = 'main'
+        criteria:
+          - condition: "row_count >= 0"
+            severity: INFO
+            finding_title: "SQLite identity attributes"
+
+  - control_id: SQLITE-DISC-002
+    control_code: SQLITE-DISC-002
+    category: Configuration
+    title: SQLite Durability Settings
+    description: Collects runtime settings impacting durability and concurrency
+    procedures:
+      - procedure_id: SQLITE-DISC-002-P1
+        system_type: sqlite
+        tests: |
+          SELECT
+            'JOURNAL_MODE' AS ATTRIBUTE_NAME,
+            CAST(journal_mode AS TEXT) AS ATTRIBUTE_VALUE,
+            'text' AS ATTRIBUTE_TYPE,
+            'Configuration' AS CATEGORY
+          FROM pragma_journal_mode
+          UNION ALL
+          SELECT
+            'SYNCHRONOUS' AS ATTRIBUTE_NAME,
+            CAST(synchronous AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Configuration' AS CATEGORY
+          FROM pragma_synchronous
+          UNION ALL
+          SELECT
+            'FOREIGN_KEYS' AS ATTRIBUTE_NAME,
+            CAST(foreign_keys AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Configuration' AS CATEGORY
+          FROM pragma_foreign_keys
+          UNION ALL
+          SELECT
+            'AUTO_VACUUM' AS ATTRIBUTE_NAME,
+            CAST(auto_vacuum AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Configuration' AS CATEGORY
+          FROM pragma_auto_vacuum
+          UNION ALL
+          SELECT
+            'AUTOMATIC_INDEX' AS ATTRIBUTE_NAME,
+            CAST(automatic_index AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Configuration' AS CATEGORY
+          FROM pragma_automatic_index
+          UNION ALL
+          SELECT
+            'BUSY_TIMEOUT_MS' AS ATTRIBUTE_NAME,
+            CAST(timeout AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Configuration' AS CATEGORY
+          FROM pragma_busy_timeout
+        criteria:
+          - condition: "row_count >= 0"
+            severity: INFO
+            finding_title: "SQLite configuration attributes"
+
+  - control_id: SQLITE-DISC-003
+    control_code: SQLITE-DISC-003
+    category: Capacity
+    title: SQLite Size and Bloat Metrics
+    description: Collects page and freelist metrics for storage health baselining
+    procedures:
+      - procedure_id: SQLITE-DISC-003-P1
+        system_type: sqlite
+        tests: |
+          SELECT
+            'PAGE_SIZE_BYTES' AS ATTRIBUTE_NAME,
+            CAST(page_size AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Capacity' AS CATEGORY
+          FROM pragma_page_size
+          UNION ALL
+          SELECT
+            'PAGE_COUNT' AS ATTRIBUTE_NAME,
+            CAST(page_count AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Capacity' AS CATEGORY
+          FROM pragma_page_count
+          UNION ALL
+          SELECT
+            'FREELIST_COUNT' AS ATTRIBUTE_NAME,
+            CAST(freelist_count AS TEXT) AS ATTRIBUTE_VALUE,
+            'number' AS ATTRIBUTE_TYPE,
+            'Capacity' AS CATEGORY
+          FROM pragma_freelist_count
+        criteria:
+          - condition: "row_count >= 0"
+            severity: INFO
+            finding_title: "SQLite capacity attributes"

@@ -1,0 +1,304 @@
+metadata:
+  control_set_id: oracle-controls-baseline-v1.0.0
+  control_set_version: 1.0.0
+  database_type: oracle
+  control_set_type: Security
+  tier: free
+  description: Oracle Database Security Baseline - high-signal current-state findings for free tier
+  author: system
+  license: Proprietary
+  # FREE TIER: Summary findings only. No audit logs, history, drift, exact principal names,
+  # timestamps, or compliance evidence archive. Paid pack will add those.
+  signature:
+    algorithm: RSA-SHA256
+    signature_b64: "XD1s9fMURV2PpR/gWyUdBbyFPdzvxSQPXHDjMRVCiwkUpnS+G1BQBw0REFqtXIDXhlB1E/QKQHs1u6nRgSYo1UCyEXcLqxPG763taDfSay+iXCJ/kXlVB/HOpNMsG6LPk9Jmwn9/6o4gCxvAGysdHxOpcT10w+Vp77bLAup5akeccq1ZF6VtwCHp6ESmaHSsD5HhRWKt3NkBg8soRTDm4EvMvMtLvftUTDkLPShNxQ3SbV9Ss4QxqXOHCVLk6K7ylbOn9weK9v1wpYILQ+OohT09QV1Sv73Ykit9Zf/RloE7ZLQKu7ciCVrJxVYux0Imiu3mp4dONIgZwjqURvKVeQ=="
+
+controls:
+  - control_id: ORA-FREE-001
+    control_code: ORA-FREE-001
+    category: Authentication
+    title: Default Oracle Accounts Unlocked
+    description: Reports count of default Oracle accounts that are not locked
+    procedures:
+      - procedure_id: ORA-FREE-001-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS unlocked_default_count
+          FROM dba_users
+          WHERE username IN ('SCOTT', 'HR', 'OE', 'SH', 'PM', 'IX', 'BI', 'DEMO', 'OUTLN', 'DBSNMP')
+            AND account_status NOT IN ('LOCKED', 'EXPIRED & LOCKED')
+        criteria:
+          - condition: "unlocked_default_count > 0"
+            severity: HIGH
+            finding_title: "Default Oracle accounts are not locked"
+    remediation:
+      summary: "Lock default accounts to prevent unauthorized access: ALTER USER username ACCOUNT LOCK"
+
+  - control_id: ORA-FREE-002
+    control_code: ORA-FREE-002
+    category: Authentication
+    title: Weak Password Policy
+    description: Reports count of password policy violations in active profiles
+    procedures:
+      - procedure_id: ORA-FREE-002-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS weak_policy_count
+          FROM dba_profiles
+          WHERE profile IN (SELECT DISTINCT profile FROM dba_users WHERE account_status = 'OPEN')
+            AND resource_type = 'PASSWORD'
+            AND (
+              (resource_name = 'PASSWORD_LIFE_TIME' AND limit = 'UNLIMITED') OR
+              (resource_name = 'PASSWORD_VERIFY_FUNCTION' AND limit IN ('NULL', 'DEFAULT')) OR
+              (resource_name = 'FAILED_LOGIN_ATTEMPTS' AND limit = 'UNLIMITED')
+            )
+        criteria:
+          - condition: "weak_policy_count > 0"
+            severity: HIGH
+            finding_title: "Weak password policies detected"
+    remediation:
+      summary: "Configure password policies with expiration, complexity verification, and login attempt limits."
+
+  - control_id: ORA-FREE-003
+    control_code: ORA-FREE-003
+    category: Auditing
+    title: Database Audit Trail Disabled
+    description: Reports if database auditing is not enabled
+    procedures:
+      - procedure_id: ORA-FREE-003-P1
+        system_type: oracle
+        tests: |
+          SELECT CASE WHEN UPPER(value) = 'NONE' THEN 1 ELSE 0 END AS audit_disabled
+          FROM v$parameter
+          WHERE name = 'audit_trail'
+        criteria:
+          - condition: "audit_disabled == 1"
+            severity: HIGH
+            finding_title: "Database audit trail is disabled"
+    remediation:
+      summary: "Enable auditing: ALTER SYSTEM SET audit_trail=DB,EXTENDED SCOPE=SPFILE"
+
+  - control_id: ORA-FREE-004
+    control_code: ORA-FREE-004
+    category: Encryption
+    title: Unencrypted Tablespaces Review
+    description: Reports count of unencrypted permanent tablespaces for encryption review
+    procedures:
+      - procedure_id: ORA-FREE-004-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS unencrypted_tablespace_count
+          FROM dba_tablespaces
+          WHERE contents = 'PERMANENT'
+            AND tablespace_name NOT IN ('SYSTEM', 'SYSAUX', 'TEMP', 'UNDOTBS1', 'UNDOTBS2')
+            AND (encrypted = 'NO' OR encrypted IS NULL)
+        criteria:
+          - condition: "unencrypted_tablespace_count > 0"
+            severity: LOW
+            finding_title: "Review: Unencrypted tablespaces exist"
+    remediation:
+      summary: "Evaluate if Transparent Data Encryption is required based on data sensitivity and compliance needs."
+
+  - control_id: ORA-FREE-005
+    control_code: ORA-FREE-005
+    category: Authorization
+    title: DBA Role Grants Review
+    description: Reports count of non-default users with DBA role for least-privilege review
+    procedures:
+      - procedure_id: ORA-FREE-005-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS dba_grant_count
+          FROM dba_role_privs
+          WHERE granted_role = 'DBA'
+            AND grantee NOT IN ('SYS', 'SYSTEM', 'DBSNMP')
+        criteria:
+          - condition: "dba_grant_count > 0"
+            severity: MEDIUM
+            finding_title: "Review: Non-default users have DBA role"
+    remediation:
+      summary: "Review DBA role grants and apply least-privilege principle. DBA grants may be appropriate for admin accounts."
+
+  - control_id: ORA-FREE-006
+    control_code: ORA-FREE-006
+    category: Authorization
+    title: PUBLIC System Privileges
+    description: Reports count of dangerous system privileges granted to PUBLIC
+    procedures:
+      - procedure_id: ORA-FREE-006-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS public_priv_count
+          FROM dba_sys_privs
+          WHERE grantee = 'PUBLIC'
+            AND privilege IN (
+              'CREATE ANY PROCEDURE', 'CREATE ANY TABLE', 'CREATE ANY TRIGGER',
+              'DROP ANY TABLE', 'DROP ANY PROCEDURE', 'ALTER ANY TABLE',
+              'EXECUTE ANY PROCEDURE', 'DELETE ANY TABLE', 'INSERT ANY TABLE',
+              'UPDATE ANY TABLE', 'SELECT ANY TABLE', 'CREATE ANY LIBRARY',
+              'EXEMPT ACCESS POLICY', 'BECOME USER'
+            )
+        criteria:
+          - condition: "public_priv_count > 0"
+            severity: CRITICAL
+            finding_title: "Dangerous privileges granted to PUBLIC"
+    remediation:
+      summary: "Revoke dangerous system privileges from PUBLIC role."
+
+  - control_id: ORA-FREE-007
+    control_code: ORA-FREE-007
+    category: Network Security
+    title: PUBLIC EXECUTE on Network Packages
+    description: Reports count of PUBLIC EXECUTE grants on network-capable packages
+    procedures:
+      - procedure_id: ORA-FREE-007-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS network_pkg_count
+          FROM dba_tab_privs
+          WHERE owner = 'SYS'
+            AND grantee = 'PUBLIC'
+            AND privilege = 'EXECUTE'
+            AND table_name IN ('UTL_HTTP', 'UTL_TCP', 'UTL_SMTP', 'UTL_FILE')
+        criteria:
+          - condition: "network_pkg_count > 0"
+            severity: HIGH
+            finding_title: "PUBLIC has EXECUTE on network packages"
+    remediation:
+      summary: "Revoke EXECUTE on UTL_HTTP, UTL_TCP, UTL_SMTP, UTL_FILE from PUBLIC."
+
+  - control_id: ORA-FREE-008
+    control_code: ORA-FREE-008
+    category: Authentication
+    title: Case-Sensitive Logon Disabled
+    description: Reports if case-sensitive password verification is disabled
+    procedures:
+      - procedure_id: ORA-FREE-008-P1
+        system_type: oracle
+        tests: |
+          SELECT CASE WHEN UPPER(value) = 'TRUE' THEN 0 ELSE 1 END AS case_insensitive
+          FROM v$parameter
+          WHERE name = 'sec_case_sensitive_logon'
+        criteria:
+          - condition: "case_insensitive == 1"
+            severity: HIGH
+            finding_title: "Case-sensitive password verification is disabled"
+    remediation:
+      summary: "Enable case-sensitive passwords: ALTER SYSTEM SET sec_case_sensitive_logon=TRUE"
+
+  - control_id: ORA-FREE-009
+    control_code: ORA-FREE-009
+    category: Authorization
+    title: OS_ROLES Enabled
+    description: Reports if OS_ROLES parameter is enabled
+    procedures:
+      - procedure_id: ORA-FREE-009-P1
+        system_type: oracle
+        tests: |
+          SELECT CASE WHEN UPPER(value) = 'FALSE' THEN 0 ELSE 1 END AS os_roles_enabled
+          FROM v$parameter
+          WHERE name = 'os_roles'
+        criteria:
+          - condition: "os_roles_enabled == 1"
+            severity: HIGH
+            finding_title: "OS_ROLES is enabled"
+    remediation:
+      summary: "Disable OS-based role assignment: ALTER SYSTEM SET os_roles=FALSE"
+
+  - control_id: ORA-FREE-010
+    control_code: ORA-FREE-010
+    category: Authorization
+    title: INHERIT ANY PRIVILEGES to PUBLIC
+    description: Reports if INHERIT ANY PRIVILEGES is granted to PUBLIC
+    procedures:
+      - procedure_id: ORA-FREE-010-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS inherit_any_to_public
+          FROM dba_sys_privs
+          WHERE privilege = 'INHERIT ANY PRIVILEGES'
+            AND grantee = 'PUBLIC'
+        criteria:
+          - condition: "inherit_any_to_public > 0"
+            severity: CRITICAL
+            finding_title: "INHERIT ANY PRIVILEGES granted to PUBLIC"
+    remediation:
+      summary: "Revoke INHERIT ANY PRIVILEGES from PUBLIC immediately."
+
+  - control_id: ORA-FREE-011
+    control_code: ORA-FREE-011
+    category: Authentication
+    title: Expired Open Accounts
+    description: Reports count of accounts that are OPEN but past expiry date
+    procedures:
+      - procedure_id: ORA-FREE-011-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS expired_open_count
+          FROM dba_users
+          WHERE account_status = 'OPEN'
+            AND expiry_date IS NOT NULL
+            AND expiry_date < SYSDATE
+        criteria:
+          - condition: "expired_open_count > 0"
+            severity: MEDIUM
+            finding_title: "Expired accounts remain open"
+    remediation:
+      summary: "Lock or disable accounts that have passed their expiry date."
+
+  - control_id: ORA-FREE-012
+    control_code: ORA-FREE-012
+    category: Authorization
+    title: DBA with ADMIN OPTION
+    description: Reports count of non-system users with DBA role and ADMIN OPTION
+    procedures:
+      - procedure_id: ORA-FREE-012-P1
+        system_type: oracle
+        tests: |
+          SELECT COUNT(*) AS dba_admin_count
+          FROM dba_role_privs
+          WHERE granted_role = 'DBA'
+            AND admin_option = 'YES'
+            AND grantee NOT IN ('SYS', 'SYSTEM')
+        criteria:
+          - condition: "dba_admin_count > 0"
+            severity: HIGH
+            finding_title: "DBA role granted with ADMIN OPTION"
+    remediation:
+      summary: "Review DBA grants with ADMIN OPTION; remove ADMIN OPTION where not required."
+
+  - control_id: ORA-FREE-013
+    control_code: ORA-FREE-013
+    category: Auditing
+    title: SYS Audit Operations Disabled
+    description: Reports if audit_sys_operations is not enabled
+    procedures:
+      - procedure_id: ORA-FREE-013-P1
+        system_type: oracle
+        tests: |
+          SELECT CASE WHEN UPPER(value) = 'TRUE' THEN 0 ELSE 1 END AS sys_audit_disabled
+          FROM v$parameter
+          WHERE name = 'audit_sys_operations'
+        criteria:
+          - condition: "sys_audit_disabled == 1"
+            severity: HIGH
+            finding_title: "SYS operations auditing is disabled"
+    remediation:
+      summary: "Enable SYS audit: ALTER SYSTEM SET audit_sys_operations=TRUE SCOPE=SPFILE"
+
+  - control_id: ORA-FREE-014
+    control_code: ORA-FREE-014
+    category: Identity
+    title: Oracle Database Version
+    description: Collects Oracle version for security baseline assessment
+    procedures:
+      - procedure_id: ORA-FREE-014-P1
+        system_type: oracle
+        tests: |
+          SELECT banner AS version_banner
+          FROM v$version
+          WHERE banner LIKE 'Oracle%'
+            AND ROWNUM = 1
+        criteria:
+          - condition: "informational"
+            severity: INFO

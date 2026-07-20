@@ -1,0 +1,266 @@
+metadata:
+  control_set_id: postgres-controls-baseline-v1.0.0
+  control_set_version: 1.0.0
+  database_type: postgres
+  control_set_type: Security
+  tier: free
+  description: PostgreSQL Security Baseline - high-signal current-state findings for free tier
+  author: system
+  license: Proprietary
+  # FREE TIER: Summary findings only. No audit logs, history, drift, exact role names,
+  # timestamps, or compliance evidence archive. Paid pack will add those.
+  signature:
+    algorithm: RSA-SHA256
+    signature_b64: "UB8mA8pJr541vllvHOtrL/5fOyQe9gmX+kbD45uDt7ib+WUKdpVXw/aJ/5rUbaowetZ0ZSfVwCDgLR2LkjdHGQVDOoBN1rXhPVzx7VzosQgV7cFHdJVJCREy2lS+Q3CSCkAWYNWq+VFcTh0Ftbi0XGRUiOc1F11AxPaJn5o/k+thfmKGevT2Jb3zTnt20JP/AlEX03S6g5OreF6ZmBHniS7hK0qsqk8jp4FkDsJvy7Ifal4rflPI5S9vlFwMGFIXYJ/aQ0R/rWBwGdWh7OapNjrNL9f8jPIvMF2f6rL5uIFfIyh57lUADxEpOugMjMtSWgxDWKFu671f4nQFhtT7gg=="
+
+controls:
+  - control_id: PG-FREE-001
+    control_code: PG-FREE-001
+    category: Identity
+    title: PostgreSQL Version Information
+    description: Collects PostgreSQL version for security baseline assessment
+    procedures:
+      - procedure_id: PG-FREE-001-P1
+        system_type: postgres
+        tests: |
+          SELECT
+            version() AS version_string,
+            current_setting('server_version') AS server_version,
+            current_setting('server_version_num')::int AS version_num
+        criteria:
+          - condition: "informational"
+            severity: INFO
+
+  - control_id: PG-FREE-002
+    control_code: PG-FREE-002
+    category: Encryption
+    title: SSL Not Enabled
+    description: Detects if SSL is disabled for database connections
+    procedures:
+      - procedure_id: PG-FREE-002-P1
+        system_type: postgres
+        tests: |
+          SELECT current_setting('ssl') AS ssl_setting
+        criteria:
+          - condition: "ssl_setting == 'off'"
+            severity: HIGH
+            finding_title: "SSL is disabled"
+    remediation:
+      summary: "Connections are vulnerable to eavesdropping without SSL encryption. Enable SSL in postgresql.conf: ssl = on"
+
+  - control_id: PG-FREE-003
+    control_code: PG-FREE-003
+    category: Authentication
+    title: Weak Password Encryption Method
+    description: Detects if MD5 password hashing is used instead of SCRAM-SHA-256
+    procedures:
+      - procedure_id: PG-FREE-003-P1
+        system_type: postgres
+        tests: |
+          SELECT current_setting('password_encryption') AS password_encryption
+        criteria:
+          - condition: "password_encryption == 'md5'"
+            severity: MEDIUM
+            finding_title: "Password encryption uses MD5"
+    remediation:
+      summary: "MD5 is cryptographically weak; SCRAM-SHA-256 provides better security. Set password_encryption = 'scram-sha-256' in postgresql.conf"
+
+  - control_id: PG-FREE-004
+    control_code: PG-FREE-004
+    category: Authorization
+    title: Non-Default Superuser Count Review
+    description: Reports count of superuser roles beyond postgres for least-privilege review
+    procedures:
+      - procedure_id: PG-FREE-004-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS non_default_superuser_count
+          FROM pg_roles
+          WHERE rolsuper = true
+            AND rolname NOT IN ('postgres', 'rds_superuser', 'azure_superuser', 'cloudsqlsuperuser')
+        criteria:
+          - condition: "non_default_superuser_count > 0"
+            severity: MEDIUM
+            finding_title: "Review: Non-default superuser roles exist"
+    remediation:
+      summary: "Superuser roles bypass all permission checks. Review grants and revoke where not strictly required; some admin accounts may legitimately need superuser."
+
+  - control_id: PG-FREE-005
+    control_code: PG-FREE-005
+    category: Authorization
+    title: CREATEDB Privilege Review
+    description: Reports count of roles with database creation privilege for review
+    procedures:
+      - procedure_id: PG-FREE-005-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS createdb_role_count
+          FROM pg_roles
+          WHERE rolcreatedb = true
+            AND rolsuper = false
+            AND rolname NOT LIKE 'pg_%'
+        criteria:
+          - condition: "createdb_role_count > 0"
+            severity: LOW
+            finding_title: "Review: Roles with CREATEDB privilege"
+    remediation:
+      summary: "CREATEDB allows resource consumption. Review roles with CREATEDB; this privilege may be appropriate for development or admin accounts."
+
+  - control_id: PG-FREE-006
+    control_code: PG-FREE-006
+    category: Authorization
+    title: CREATEROLE Privilege Review
+    description: Reports count of roles that can create other roles for review
+    procedures:
+      - procedure_id: PG-FREE-006-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS createrole_count
+          FROM pg_roles
+          WHERE rolcreaterole = true
+            AND rolsuper = false
+            AND rolname NOT LIKE 'pg_%'
+        criteria:
+          - condition: "createrole_count > 0"
+            severity: MEDIUM
+            finding_title: "Review: Roles with CREATEROLE privilege"
+    remediation:
+      summary: "CREATEROLE can escalate privileges. Review grants and minimize where possible; admin accounts may legitimately need this privilege."
+
+  - control_id: PG-FREE-007
+    control_code: PG-FREE-007
+    category: Authorization
+    title: PUBLIC Schema Has CREATE Permission
+    description: Detects if PUBLIC has CREATE permission on the public schema
+    procedures:
+      - procedure_id: PG-FREE-007-P1
+        system_type: postgres
+        tests: |
+          SELECT CASE WHEN has_schema_privilege('public', 'public', 'CREATE')
+            THEN 1 ELSE 0 END AS public_has_create
+        criteria:
+          - condition: "public_has_create == 1"
+            severity: MEDIUM
+            finding_title: "PUBLIC role has CREATE on public schema"
+    remediation:
+      summary: "Any authenticated user can create objects, enabling privilege escalation. REVOKE CREATE ON SCHEMA public FROM PUBLIC"
+
+  # PG-FREE-008 removed: pg_hba_file_rules is not available on managed PostgreSQL
+  # (RDS, Supabase, Cloud SQL) and would error. Trust authentication checks
+  # require self-managed PostgreSQL and belong in a paid/self-managed pack.
+
+  - control_id: PG-FREE-009
+    control_code: PG-FREE-009
+    category: Auditing
+    title: Connection Logging Disabled
+    description: Detects if connection logging is disabled
+    procedures:
+      - procedure_id: PG-FREE-009-P1
+        system_type: postgres
+        tests: |
+          SELECT current_setting('log_connections') AS log_connections
+        criteria:
+          - condition: "log_connections == 'off'"
+            severity: MEDIUM
+            finding_title: "Connection logging is disabled"
+    remediation:
+      summary: "Without connection logs, access patterns cannot be audited. Set log_connections = on in postgresql.conf"
+
+  - control_id: PG-FREE-010
+    control_code: PG-FREE-010
+    category: Auditing
+    title: Disconnection Logging Disabled
+    description: Detects if disconnection logging is disabled
+    procedures:
+      - procedure_id: PG-FREE-010-P1
+        system_type: postgres
+        tests: |
+          SELECT current_setting('log_disconnections') AS log_disconnections
+        criteria:
+          - condition: "log_disconnections == 'off'"
+            severity: LOW
+            finding_title: "Disconnection logging is disabled"
+    remediation:
+      summary: "Session duration cannot be audited without disconnection logs. Set log_disconnections = on in postgresql.conf"
+
+  - control_id: PG-FREE-011
+    control_code: PG-FREE-011
+    category: Configuration
+    title: External Access Extensions Review
+    description: Reports extensions that enable file or remote database access for review
+    procedures:
+      - procedure_id: PG-FREE-011-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS external_access_extension_count
+          FROM pg_extension
+          WHERE extname IN ('adminpack', 'dblink', 'file_fdw', 'postgres_fdw')
+        criteria:
+          - condition: "external_access_extension_count > 0"
+            severity: LOW
+            finding_title: "Review: External access extensions installed"
+    remediation:
+      summary: "dblink/postgres_fdw/file_fdw are legitimate extensions but enable external access. Verify they are required for your use case."
+
+  - control_id: PG-FREE-012
+    control_code: PG-FREE-012
+    category: Lifecycle
+    title: Unsupported PostgreSQL Version
+    description: Flags PostgreSQL versions that are out of community support
+    procedures:
+      - procedure_id: PG-FREE-012-P1
+        system_type: postgres
+        tests: |
+          SELECT current_setting('server_version_num')::int AS version_num
+        criteria:
+          - condition: "version_num < 130000"
+            severity: HIGH
+            finding_title: "PostgreSQL version is unsupported"
+          - condition: "version_num >= 130000 AND version_num < 140000"
+            severity: MEDIUM
+            finding_title: "PostgreSQL version is EOL soon"
+    remediation:
+      summary: "Unsupported versions do not receive security patches. Upgrade to a supported PostgreSQL version (14+)."
+
+  - control_id: PG-FREE-013
+    control_code: PG-FREE-013
+    category: Authorization
+    title: Replication Role Review
+    description: Reports count of roles with replication privilege for review
+    procedures:
+      - procedure_id: PG-FREE-013-P1
+        system_type: postgres
+        tests: |
+          SELECT COUNT(*) AS replication_role_count
+          FROM pg_roles
+          WHERE rolreplication = true
+            AND rolname NOT IN ('postgres', 'rds_superuser', 'azure_superuser', 'cloudsqlsuperuser')
+            AND rolname NOT LIKE 'pg_%'
+        criteria:
+          - condition: "replication_role_count > 0"
+            severity: LOW
+            finding_title: "Review: Non-default replication roles exist"
+    remediation:
+      summary: "Replication roles can read all data via streaming. Review grants; replication accounts may be legitimate for HA/backup."
+
+  - control_id: PG-FREE-014
+    control_code: PG-FREE-014
+    category: Auditing
+    title: DDL Statement Logging Not Enabled
+    description: Reports if DDL statement logging is disabled for security audit review
+    procedures:
+      - procedure_id: PG-FREE-014-P1
+        system_type: postgres
+        tests: |
+          SELECT current_setting('log_statement') AS log_statement
+        criteria:
+          - condition: "log_statement == 'none'"
+            severity: LOW
+            finding_title: "DDL statement logging not enabled"
+    remediation:
+      summary: "Schema changes (CREATE, ALTER, DROP) are not being logged; verify if audit requirements apply. Consider log_statement = 'ddl' if DDL audit is required."
+
+  # PG-FREE-015 removed: search_path check logic was too shaky for free tier.
+  # Session-level search_path doesn't reflect database/role defaults, and the
+  # standard "$user", public pattern is acceptable. Defer to paid pack with
+  # proper per-role/per-database search_path audit.

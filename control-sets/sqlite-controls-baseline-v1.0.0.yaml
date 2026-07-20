@@ -1,0 +1,117 @@
+metadata:
+  control_set_id: sqlite-controls-baseline-v1.0.0
+  control_set_version: 1.0.0
+  database_type: sqlite
+  control_set_type: Security
+  tier: free
+  description: SQLite security and durability baseline checks for founder-focused deployments
+  author: system
+  license: Proprietary
+  # NOTE: This pack is explicitly free tier for high-signal security findings.
+  # Future consideration: Split evidence-heavy controls to paid tier (Slice 2).
+  signature:
+    algorithm: RSA-SHA256
+    signature_b64: "KEDJ0VGifPl3P79Rjo704Jjnd+3W7iQ3VzrY7HNUJqhFKONEYj5LbkIWAcqw9UiZrV5x5qhDK4BFUN1FCf/VRzmhe8Rl5Toxvwb7am+OlhkDgeOsaZ8uvuHoOwi59J7Vnw1hLWLx3ZT9vaa8zFoLsZ5xmedfh4FDaP6noUtEBNidvwFTqp7LWnI84pM3C+chM5CLti76REiSxHiNn56ck5LTGs1NAAoT4L2Q0SE/qH4NyhpkWTtmwIq25ODRarBH3xQLckgJ7yiiWbHuXex4kmkdeVbRnvJn3rvTL2IYKjJka8oUr4oNnT4qpCTha0ROkc/xQSn3kuw7o/+e2q0DNg=="
+
+controls:
+  - control_id: SQLITE-SEC-001
+    control_code: SQLITE-SEC-001
+    category: Data Protection
+    title: Foreign Key Enforcement Configuration Review
+    description: "Review control: application connections must enable foreign-key enforcement. Additional validation is required before treating this as a confirmed defect. Evidence boundary: SQLite reports PRAGMA foreign_keys per connection; this control observes only the agent connection."
+    procedures:
+      - procedure_id: SQLITE-SEC-001-P1
+        system_type: sqlite
+        tests: |
+          SELECT 'foreign_keys' AS attribute_name,
+                 foreign_keys AS AGENT_CONNECTION_FK_ENABLED
+          FROM pragma_foreign_keys
+        criteria:
+          - condition: "review_required"
+            severity: MEDIUM
+            finding_title: "Review application foreign-key enforcement (agent connection reports {AGENT_CONNECTION_FK_ENABLED})"
+    remediation:
+      summary: "Review every application connection string and initialization path. Expected application connection state: PRAGMA foreign_keys = ON. Evidence boundary: the agent connection value is not proof of the application's connection state."
+
+  - control_id: SQLITE-SEC-002
+    control_code: SQLITE-SEC-002
+    category: Data Protection
+    title: Foreign Key Violations Check
+    description: Detects existing referential integrity violations in current data
+    procedures:
+      - procedure_id: SQLITE-SEC-002-P1
+        system_type: sqlite
+        tests: |
+          SELECT
+            "table" AS TABLE_NAME,
+            rowid AS ROW_ID,
+            parent AS PARENT_TABLE,
+            fkid AS FK_ID
+          FROM pragma_foreign_key_check
+        criteria:
+          - condition: "TABLE_NAME != ''"
+            severity: CRITICAL
+            finding_title: "Foreign key violation in {TABLE_NAME} row {ROW_ID}"
+    remediation:
+      summary: "Repair violating rows, then enforce FK constraints in write paths"
+
+  - control_id: SQLITE-SEC-003
+    control_code: SQLITE-SEC-003
+    category: Configuration
+    title: Integrity Check Passes
+    description: Detects structural corruption indicators reported by PRAGMA integrity_check
+    procedures:
+      - procedure_id: SQLITE-SEC-003-P1
+        system_type: sqlite
+        tests: |
+          SELECT integrity_check AS CHECK_RESULT
+          FROM pragma_integrity_check
+          WHERE lower(integrity_check) <> 'ok'
+        criteria:
+          - condition: "CHECK_RESULT != ''"
+            severity: CRITICAL
+            finding_title: "Integrity check failed: {CHECK_RESULT}"
+    remediation:
+      summary: "Take a fresh backup and run recovery procedure immediately"
+
+  - control_id: SQLITE-SEC-004
+    control_code: SQLITE-SEC-004
+    category: Configuration
+    title: Journal Mode Safety
+    description: Detects journal modes that increase corruption or data loss risk
+    procedures:
+      - procedure_id: SQLITE-SEC-004-P1
+        system_type: sqlite
+        tests: |
+          SELECT lower(CAST(journal_mode AS TEXT)) AS JOURNAL_MODE
+          FROM pragma_journal_mode
+        criteria:
+          - condition: "JOURNAL_MODE == 'off'"
+            severity: CRITICAL
+            finding_title: "Journal mode is OFF"
+          - condition: "JOURNAL_MODE == 'memory'"
+            severity: HIGH
+            finding_title: "Journal mode is MEMORY"
+    remediation:
+      summary: "Use WAL (preferred) or DELETE mode for durable production behavior"
+
+  - control_id: SQLITE-SEC-005
+    control_code: SQLITE-SEC-005
+    category: Configuration
+    title: SQLite Connection Durability Settings Review
+    description: "Review control: application connections should configure synchronous mode and busy timeout for their workload. Additional validation is required before treating this as a confirmed defect. Evidence boundary: SQLite reports both settings per connection; this control observes only the agent connection."
+    procedures:
+      - procedure_id: SQLITE-SEC-005-P1
+        system_type: sqlite
+        tests: |
+          SELECT
+            'connection_durability_settings' AS attribute_name,
+            CAST(synchronous AS INTEGER) AS AGENT_CONNECTION_SYNCHRONOUS,
+            (SELECT CAST(timeout AS INTEGER) FROM pragma_busy_timeout) AS AGENT_CONNECTION_BUSY_TIMEOUT_MS
+          FROM pragma_synchronous
+        criteria:
+          - condition: "review_required"
+            severity: MEDIUM
+            finding_title: "Review application SQLite durability settings (agent reports synchronous={AGENT_CONNECTION_SYNCHRONOUS}, busy_timeout_ms={AGENT_CONNECTION_BUSY_TIMEOUT_MS})"
+    remediation:
+      summary: "Review every application connection string and initialization path. Expected application connection state: synchronous FULL or NORMAL and busy_timeout greater than 0 (for example 5000 ms). Evidence boundary: agent connection values are not proof of the application's connection state."

@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test, vet, race
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Vet
+        env:
+          CGO_ENABLED: "1"
+        run: go vet ./...
+
+      - name: Test
+        env:
+          CGO_ENABLED: "1"
+        run: go test -count=1 ./...
+
+      - name: Test (race)
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
+
+  build:
+    name: ${{ matrix.os-name }}-${{ matrix.arch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os-name: linux
+            arch: amd64
+            binary: basecheck-agent-linux-amd64
+            archive: basecheck-agent-linux-amd64.tar.gz
+
+          - runner: ubuntu-24.04-arm
+            os-name: linux
+            arch: arm64
+            binary: basecheck-agent-linux-arm64
+            archive: basecheck-agent-linux-arm64.tar.gz
+
+          - runner: macos-15-intel
+            os-name: darwin
+            arch: amd64
+            binary: basecheck-agent-darwin-amd64
+            archive: basecheck-agent-darwin-amd64.tar.gz
+
+          - runner: macos-15
+            os-name: darwin
+            arch: arm64
+            binary: basecheck-agent-darwin-arm64
+            archive: basecheck-agent-darwin-arm64.tar.gz
+
+          - runner: windows-latest
+            os-name: windows
+            arch: amd64
+            binary: basecheck-agent-windows-amd64.exe
+            archive: basecheck-agent-windows-amd64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      # CGO on Windows requires a C compiler. Add the pre-installed MinGW to PATH.
+      # If this path breaks on a future runner image, replace with:
+      #   choco install mingw --no-progress -y
+      - name: Add MinGW to PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
+        shell: bash
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          VERSION="${{ github.ref_name }}"
+          go build \
+            -ldflags "-X main.Version=${VERSION#v}" \
+            -o ${{ matrix.binary }} \
+            ./cmd/agent
+        shell: bash
+
+      # Proves the binary starts. Does not exercise Oracle — that requires
+      # Instant Client at runtime, which is not installed here.
+      - name: Smoke test
+        run: ./${{ matrix.binary }} --version
+        shell: bash
+
+      - name: Stage release package
+        run: |
+          PKG_DIR="pkg/basecheck-agent"
+          mkdir -p "$PKG_DIR/docs" "$PKG_DIR/control-sets"
+
+          # Normalize binary name so users run ./basecheck-agent on all platforms
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "${{ matrix.binary }}" "$PKG_DIR/basecheck-agent.exe"
+          else
+            cp "${{ matrix.binary }}" "$PKG_DIR/basecheck-agent"
+            chmod +x "$PKG_DIR/basecheck-agent"
+          fi
+
+          cp config.yaml.example  "$PKG_DIR/"
+          cp README.md            "$PKG_DIR/"
+          cp STANDALONE.md        "$PKG_DIR/"
+          cp CHANGELOG.md         "$PKG_DIR/"
+          cp CONTRIBUTING.md      "$PKG_DIR/"
+          cp SECURITY.md          "$PKG_DIR/"
+          cp LICENSE              "$PKG_DIR/"
+          cp docs/INSTALL.md      "$PKG_DIR/docs/"
+          cp docs/CLOUD_DATABASES.md "$PKG_DIR/docs/"
+          cp docs/QUICKSTART_CLOUD.md "$PKG_DIR/docs/"
+          cp docs/SIGNING.md      "$PKG_DIR/docs/"
+          cp -R examples          "$PKG_DIR/"
+
+          bash ./scripts/package-free-controls.sh "$PKG_DIR/control-sets"
+          bash ./scripts/verify-free-artifact.sh  "$PKG_DIR/control-sets"
+        shell: bash
+
+      # Proves the packaged binary can actually execute the packaged
+      # (signed) control sets against a live database using the packaged
+      # config.yaml.example's public key, with security.require_signatures
+      # left at its fail-closed default. A build/vet/test pass and a
+      # `--version` smoke test can both stay green while this is broken
+      # (e.g. bundled packs re-signed with the wrong key, or not re-signed
+      # after an edit) -- this is the only step that would catch it.
+      - name: Release smoke test (packaged binary + packaged signed controls)
+        run: |
+          BINARY_NAME="basecheck-agent"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            BINARY_NAME="basecheck-agent.exe"
+          fi
+          bash ./scripts/release-smoke-test.sh "pkg/basecheck-agent" "$BINARY_NAME"
+        shell: bash
+
+      - name: Archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: tar czf ${{ matrix.archive }} -C pkg basecheck-agent
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path "pkg\basecheck-agent" -DestinationPath "${{ matrix.archive }}"
+
+      - name: Checksum (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+        shell: bash
+
+      - name: Checksum (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.archive }}").Hash.ToLower()
+          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "${{ matrix.archive }}.sha256"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os-name }}-${{ matrix.arch }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          files: release-assets/*
